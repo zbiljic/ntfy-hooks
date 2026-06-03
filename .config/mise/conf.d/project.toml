@@ -1,0 +1,19 @@
+[tasks.check]
+description = "Verify scripts are formatted and lint-clean"
+depends = ["shfmt:check", "shellcheck:lint"]
+
+[tasks.test]
+description = "Run the offline test suite"
+run = "./tests/run.sh"
+
+[tasks.validate]
+description = "Run all local repository validation (format, lint, tests)"
+depends = ["check", "test"]
+
+[tasks.install]
+description = "Run the installer from this checkout (wires local ntfy.sh)"
+run = "./install.sh"
+
+[tasks.uninstall]
+description = "Remove wiring and the installed hook (reverses install)"
+run = "./install.sh --uninstall"

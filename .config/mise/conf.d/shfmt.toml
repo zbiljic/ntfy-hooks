@@ -1,0 +1,7 @@
+[tasks."shfmt:check"]
+description = "Check scripts are shfmt-formatted (no writes)"
+run = "shfmt -i 2 -ci -d ntfy.sh install.sh"
+
+[tasks."shfmt:fmt"]
+description = "Format scripts with shfmt (2-space indent)"
+run = "shfmt -i 2 -ci -w ntfy.sh install.sh"

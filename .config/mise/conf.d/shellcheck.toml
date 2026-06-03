@@ -1,0 +1,3 @@
+[tasks."shellcheck:lint"]
+description = "Lint all scripts with shellcheck"
+run = "shellcheck -s sh ntfy.sh install.sh"
