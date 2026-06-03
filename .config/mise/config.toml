@@ -1,0 +1,4 @@
+[tasks.default]
+run = "mise tasks"
+description = "Show available tasks by default"
+hide = true
