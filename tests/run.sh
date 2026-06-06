@@ -38,8 +38,6 @@ EOF
 chmod +x "$BIN/curl"
 
 run_hook_stdin() { : >"$CURL_LOG"; printf '%s' "$1" | env PATH="$BIN:$PATH" NTFY_TOPIC=testtopic NTFY_HOOKS_CONFIG=/dev/null sh "$ROOT/ntfy.sh"; }
-run_hook_arg()   { : >"$CURL_LOG"; env PATH="$BIN:$PATH" NTFY_TOPIC=testtopic NTFY_HOOKS_CONFIG=/dev/null sh "$ROOT/ntfy.sh" "$1"; }
-
 echo "ntfy.sh — Claude Code (stdin)"
 run_hook_stdin '{"hook_event_name":"Stop","cwd":"/home/u/myproj"}'
 check "Stop: title carries project"      "Title: Claude Code (myproj)" "$CURL_LOG"
@@ -54,13 +52,14 @@ run_hook_stdin '{"hook_event_name":"PermissionRequest","cwd":"/home/u/myproj","t
 check "PermissionRequest: names tool"    "Needs permission: Bash"       "$CURL_LOG"
 check "PermissionRequest: lock tag"      "Tags: lock"                   "$CURL_LOG"
 
-echo "ntfy.sh — Codex (last argument)"
-run_hook_arg '{"type":"agent-turn-complete","cwd":"/home/u/codexproj","last-assistant-message":"All done here"}'
-check "Codex: title carries project"     "Title: Codex (codexproj)"     "$CURL_LOG"
-check "Codex: last-assistant-message"    "All done here"                "$CURL_LOG"
+echo "ntfy.sh — Codex lifecycle hooks (stdin)"
+run_hook_stdin '{"hook_event_name":"Stop","model":"gpt-5","cwd":"/home/u/codexproj","last_assistant_message":"Lifecycle done"}'
+check "Codex hook Stop: title carries project" "Title: Codex (codexproj)" "$CURL_LOG"
+check "Codex hook Stop: message"               "Lifecycle done"           "$CURL_LOG"
 
-run_hook_arg '{"type":"approval-requested","cwd":"/home/u/codexproj"}'
-check "Codex: approval high priority"    "Priority: high"               "$CURL_LOG"
+run_hook_stdin '{"hook_event_name":"PermissionRequest","model":"gpt-5","cwd":"/home/u/codexproj","tool_name":"Bash","tool_input":{"description":"network access"}}'
+check "Codex hook PermissionRequest: approval" "Needs approval: Bash - network access" "$CURL_LOG"
+check "Codex hook PermissionRequest: high"     "Priority: high"                        "$CURL_LOG"
 
 echo "ntfy.sh — opt out + missing topic"
 : >"$CURL_LOG"
@@ -98,10 +97,12 @@ echo "install.sh — wire / idempotency / uninstall"
 H="$WORK/home"
 mkdir -p "$H/.claude" "$H/.codex"
 printf '{"model":"opusplan","hooks":{"Stop":[{"hooks":[{"type":"command","command":"/existing/other.sh"}]}]}}\n' >"$H/.claude/settings.json"
-printf '# my codex config\nmodel = "gpt-5"\n' >"$H/.codex/config.toml"
+printf '# my codex config\nnotify = ["%s"]\nmodel = "gpt-5"\n' "$H/.config/ntfy-hooks/ntfy.sh" >"$H/.codex/config.toml"
+printf '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/existing/session.sh"}]}]}}\n' >"$H/.codex/hooks.json"
 
 env HOME="$H" XDG_CONFIG_HOME="$H/.config" \
   CLAUDE_SETTINGS="$H/.claude/settings.json" CODEX_CONFIG="$H/.codex/config.toml" \
+  CODEX_HOOKS="$H/.codex/hooks.json" \
   sh "$ROOT/install.sh" --topic instopic --claude --codex --no-test >/dev/null
 
 HOOK="$H/.config/ntfy-hooks/ntfy.sh"
@@ -109,28 +110,41 @@ if [ -x "$HOOK" ]; then pass "hook installed + executable"; else fail "hook inst
 check "config has topic"                 'NTFY_TOPIC="instopic"'        "$H/.config/ntfy-hooks/config"
 check "claude: preserved existing hook"  "/existing/other.sh"           "$H/.claude/settings.json"
 check "claude: wired our hook"           "$HOOK"                         "$H/.claude/settings.json"
-check "codex: notify wired"              "notify = [\"$HOOK\"]"          "$H/.codex/config.toml"
+check "codex: preserved existing hook"   "/existing/session.sh"          "$H/.codex/hooks.json"
+check "codex: hooks wired"               "$HOOK"                         "$H/.codex/hooks.json"
+check "codex: permission matcher"        '"matcher": "*"'                "$H/.codex/hooks.json"
 check "codex: preserved existing key"    'model = "gpt-5"'              "$H/.codex/config.toml"
+if grep -Fq 'notify = ' "$H/.codex/config.toml"; then fail "codex: old notify removed"; else pass "codex: old notify removed"; fi
+
+printf 'notify = ["/other/wrapper", "--previous-notify", "[\\"%s\\"]"]\nmodel = "gpt-5"\n' "$HOOK" >"$H/.codex/config.toml"
+env HOME="$H" XDG_CONFIG_HOME="$H/.config" \
+  CLAUDE_SETTINGS="$H/.claude/settings.json" CODEX_CONFIG="$H/.codex/config.toml" \
+  CODEX_HOOKS="$H/.codex/hooks.json" \
+  sh "$ROOT/install.sh" --topic instopic --no-claude --codex --no-test >/dev/null
+check "codex: preserves wrapper notify chain" '/other/wrapper'          "$H/.codex/config.toml"
 
 # Run again — must not duplicate.
 env HOME="$H" XDG_CONFIG_HOME="$H/.config" \
   CLAUDE_SETTINGS="$H/.claude/settings.json" CODEX_CONFIG="$H/.codex/config.toml" \
+  CODEX_HOOKS="$H/.codex/hooks.json" \
   sh "$ROOT/install.sh" --topic instopic --claude --codex --no-test >/dev/null
 
 COUNT=$(grep -Fc "$HOOK" "$H/.claude/settings.json" || true)
 if [ "$COUNT" = "3" ]; then pass "claude: idempotent (3 events, no dupes)"; else fail "claude: idempotent (got $COUNT occurrences, want 3)"; fi
-NCOUNT=$(grep -Fc "notify = " "$H/.codex/config.toml" || true)
-if [ "$NCOUNT" = "1" ]; then pass "codex: idempotent (single notify)"; else fail "codex: idempotent (got $NCOUNT notify lines)"; fi
+NCOUNT=$(grep -Fc "$HOOK" "$H/.codex/hooks.json" || true)
+if [ "$NCOUNT" = "2" ]; then pass "codex: idempotent (2 events, no dupes)"; else fail "codex: idempotent (got $NCOUNT occurrences, want 2)"; fi
 
 # Uninstall.
 env HOME="$H" XDG_CONFIG_HOME="$H/.config" \
   CLAUDE_SETTINGS="$H/.claude/settings.json" CODEX_CONFIG="$H/.codex/config.toml" \
+  CODEX_HOOKS="$H/.codex/hooks.json" \
   sh "$ROOT/install.sh" --uninstall >/dev/null
 
 if [ -e "$HOOK" ]; then fail "uninstall removes hook"; else pass "uninstall removes hook"; fi
 if grep -Fq "$HOOK" "$H/.claude/settings.json"; then fail "uninstall cleans claude"; else pass "uninstall cleans claude"; fi
 check "uninstall keeps other claude hook" "/existing/other.sh"          "$H/.claude/settings.json"
-if grep -Fq "$HOOK" "$H/.codex/config.toml"; then fail "uninstall cleans codex"; else pass "uninstall cleans codex"; fi
+if grep -Fq "$HOOK" "$H/.codex/hooks.json"; then fail "uninstall cleans codex"; else pass "uninstall cleans codex"; fi
+check "uninstall keeps other codex hook" "/existing/session.sh"         "$H/.codex/hooks.json"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

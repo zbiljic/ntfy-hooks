@@ -2,14 +2,13 @@
 # ntfy-hooks - universal notification hook for coding agents.
 #
 # Sends an ntfy.sh push notification when a coding agent needs your attention
-# or finishes a turn. It understands the two payload conventions in the wild:
+# or finishes a turn. It understands coding-agent hook payloads:
 #
 #   * Claude Code  - hook JSON arrives on STDIN.
-#   * Codex        - hook JSON is the LAST command-line argument (the `notify`
-#                    program is called as: notify '<json>').
+#   * Codex hooks  - hook JSON arrives on STDIN.
 #
-# Any other tool that delivers a JSON event on stdin or as the final argument
-# works too. Configuration is read from (first wins):
+# Any other tool that delivers a JSON event on stdin works too.
+# Configuration is read from (first wins):
 #
 #   1. Environment variables (NTFY_TOPIC, NTFY_URL, ...).
 #   2. $NTFY_HOOKS_CONFIG, else $XDG_CONFIG_HOME/ntfy-hooks/config
@@ -41,15 +40,9 @@ case "$NTFY_QUIET" in
 esac
 
 # --- Read the event payload -------------------------------------------------
-# Codex passes the JSON as the last positional argument; Claude Code (and
-# friends) pipe it on stdin.
+# Codex lifecycle hooks, Claude Code, and friends pipe JSON on stdin.
 
-INPUT=""
-if [ "$#" -gt 0 ]; then
-  for INPUT in "$@"; do :; done # INPUT ends up as the last argument
-else
-  INPUT="$(cat 2>/dev/null || true)"
-fi
+INPUT="$(cat 2>/dev/null || true)"
 
 # --- Helpers ----------------------------------------------------------------
 
@@ -111,11 +104,11 @@ desktop_fallback() {
 
 # --- Derive notification fields ---------------------------------------------
 
-EVENT="$(json '.hook_event_name')" # Claude Code
-TYPE="$(json '.type')"             # Codex
+EVENT="$(json '.hook_event_name')" # Claude Code / Codex lifecycle hooks
 CWD="$(json '.cwd')"
 HOOK_TITLE="$(json '.title')" # explicit override, if a caller sets it
 EXPLICIT_MSG="$(json '.message')"
+MODEL="$(json '.model')" # Codex lifecycle hook discriminator
 
 PROJECT=""
 if [ -n "$CWD" ]; then
@@ -127,7 +120,43 @@ MESSAGE=""
 TAGS=""
 PRIORITY=""
 
-if [ -n "$EVENT" ]; then
+if [ -n "$EVENT" ] && [ -n "$MODEL" ]; then
+  # ---- Codex lifecycle hooks ------------------------------------------
+  AGENT="Codex"
+  case "$EVENT" in
+    Stop)
+      MESSAGE="$(json '.last_assistant_message')"
+      [ -n "$MESSAGE" ] || MESSAGE="Turn complete"
+      TAGS="white_check_mark"
+      ;;
+    PermissionRequest)
+      tool="$(json '.tool_name')"
+      desc="$(json '.tool_input.description')"
+      MESSAGE="Needs approval${tool:+: $tool}"
+      [ -n "$desc" ] && MESSAGE="$MESSAGE - $desc"
+      TAGS="lock"
+      PRIORITY="high"
+      ;;
+    PreCompact)
+      MESSAGE="Compacting context"
+      TAGS="compression"
+      ;;
+    PostCompact)
+      MESSAGE="Compacted context"
+      TAGS="compression"
+      ;;
+    SubagentStop)
+      agent_type="$(json '.agent_type')"
+      MESSAGE="$(json '.last_assistant_message')"
+      [ -n "$MESSAGE" ] || MESSAGE="Subagent finished${agent_type:+: $agent_type}"
+      TAGS="white_check_mark"
+      ;;
+    *)
+      MESSAGE="${EXPLICIT_MSG:-$EVENT}"
+      TAGS="bell"
+      ;;
+  esac
+elif [ -n "$EVENT" ]; then
   # ---- Claude Code -----------------------------------------------------
   AGENT="Claude Code"
   case "$EVENT" in
@@ -162,29 +191,6 @@ if [ -n "$EVENT" ]; then
       ;;
     *)
       MESSAGE="${EXPLICIT_MSG:-$EVENT}"
-      TAGS="bell"
-      ;;
-  esac
-elif [ -n "$TYPE" ]; then
-  # ---- Codex -----------------------------------------------------------
-  AGENT="Codex"
-  case "$TYPE" in
-    agent-turn-complete)
-      MESSAGE="$(json '.["last-assistant-message"]')"
-      [ -n "$MESSAGE" ] || MESSAGE="Turn complete"
-      TAGS="white_check_mark"
-      ;;
-    approval-requested)
-      MESSAGE="Needs approval"
-      TAGS="lock"
-      PRIORITY="high"
-      ;;
-    plan-mode-prompt)
-      MESSAGE="Plan ready for review"
-      TAGS="memo"
-      ;;
-    *)
-      MESSAGE="$TYPE"
       TAGS="bell"
       ;;
   esac

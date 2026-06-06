@@ -62,8 +62,8 @@ cd ntfy-hooks
 | **Claude Code** | `Stop`               | finished responding    | default  |
 |                 | `Notification`       | waiting / idle prompt  | high\*   |
 |                 | `PermissionRequest`  | needs permission       | high     |
-| **Codex**       | `agent-turn-complete`| turn complete          | default  |
-|                 | `approval-requested` | needs approval         | high     |
+| **Codex**       | `Stop`               | turn complete          | default  |
+|                 | `PermissionRequest`  | needs approval         | high     |
 
 \* high when the notification is a permission prompt.
 
@@ -97,8 +97,8 @@ keep your topic). Delete `~/.config/ntfy-hooks/` to remove that too.
 The hook detects which agent called it by where the JSON event arrives:
 
 - **Claude Code** pipes the event to the hook on **stdin**.
-- **Codex** passes the event as the **last command-line argument** to the
-  program named in its `notify` setting.
+- **Codex** pipes lifecycle-hook events to the hook on **stdin** via
+  `~/.codex/hooks.json`.
 
 It then maps the event to a title/message/priority and `POST`s to ntfy with
 `curl`. The hook is defensive by design: missing topic, missing `jq`, or a

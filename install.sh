@@ -22,6 +22,7 @@ CONFIG_FILE="$CONFIG_DIR/config"
 
 CLAUDE_SETTINGS="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
 CODEX_CONFIG="${CODEX_CONFIG:-$HOME/.codex/config.toml}"
+CODEX_HOOKS="${CODEX_HOOKS:-$HOME/.codex/hooks.json}"
 
 # Defaults overridable by env or flags.
 NTFY_SERVER="${NTFY_URL:-https://ntfy.sh}"
@@ -83,7 +84,8 @@ Flags:
 
 Environment:
   NTFY_TOPIC, NTFY_URL, NTFY_TOKEN   pre-seed configuration
-  CLAUDE_SETTINGS, CODEX_CONFIG      override config paths (testing)
+  CLAUDE_SETTINGS, CODEX_CONFIG,
+  CODEX_HOOKS                        override config paths (testing)
 EOF
 }
 
@@ -270,41 +272,87 @@ unwire_claude() {
 
 # --- Codex ------------------------------------------------------------------
 
-wire_codex() {
-  notify_line="notify = [\"$HOOK_PATH\"]"
-  mkdir -p "$(dirname "$CODEX_CONFIG")"
-  if [ -f "$CODEX_CONFIG" ]; then
-    if grep -Fq "$HOOK_PATH" "$CODEX_CONFIG" 2>/dev/null; then
-      ok "Codex already points at this hook → $CODEX_CONFIG"
-      return 0
-    fi
-    if grep -Eq '^[[:space:]]*notify[[:space:]]*=' "$CODEX_CONFIG" 2>/dev/null; then
-      warn "Codex already has a 'notify' setting; not overwriting."
-      warn "To use ntfy-hooks, set it to: $notify_line"
-      return 0
-    fi
-    backup "$CODEX_CONFIG"
-    tmp=$(mktemp)
-    # `notify` is a top-level key, so it must precede any [table]; prepend it.
+# jq programs - single-quoted on purpose ($arr/$cmd are jq vars, not shell).
+# shellcheck disable=SC2016
+CODEX_ADD_FILTER='
+def entry($matcher):
+  ((if $matcher == "" then {} else { "matcher": $matcher } end)
+   + { "hooks": [ { "type": "command", "command": $cmd, "timeout": 10, "statusMessage": "Sending ntfy notification" } ] });
+def ensure($arr; $matcher):
+  if any(($arr // [])[]; (.hooks // []) | any(.command == $cmd))
+  then ($arr // [])
+  else ($arr // []) + [ entry($matcher) ]
+  end;
+.hooks = (.hooks // {})
+| .hooks.Stop              = ensure(.hooks.Stop; "")
+| .hooks.PermissionRequest = ensure(.hooks.PermissionRequest; "*")
+'
+
+# shellcheck disable=SC2016
+CODEX_DEL_FILTER='
+def clean($arr):
+  ($arr // [])
+  | map(.hooks = ((.hooks // []) | map(select(.command != $cmd))))
+  | map(select((.hooks // []) | length > 0));
+.hooks = (.hooks // {})
+| .hooks.Stop              = clean(.hooks.Stop)
+| .hooks.PermissionRequest = clean(.hooks.PermissionRequest)
+| .hooks |= with_entries(select((.value | type) != "array" or (.value | length) > 0))
+'
+
+remove_old_codex_notify() {
+  [ -f "$CODEX_CONFIG" ] || return 0
+  grep -Fq "$HOOK_PATH" "$CODEX_CONFIG" 2>/dev/null || return 0
+
+  tmp=$(mktemp)
+  awk -v hook="$HOOK_PATH" '
     {
-      printf '# Added by %s\n%s\n\n' "$APP" "$notify_line"
-      cat "$CODEX_CONFIG"
-    } >"$tmp"
+      compact = $0
+      gsub(/[[:space:]]/, "", compact)
+      if (compact == "notify=[\"" hook "\"]") next
+      print
+    }
+  ' "$CODEX_CONFIG" >"$tmp"
+
+  if ! cmp -s "$tmp" "$CODEX_CONFIG"; then
+    backup "$CODEX_CONFIG"
     mv "$tmp" "$CODEX_CONFIG"
-  else
-    printf '# Added by %s\n%s\n' "$APP" "$notify_line" >"$CODEX_CONFIG"
+    ok "Removed old Codex notify wiring from $CODEX_CONFIG"
+    return 0
   fi
-  ok "Codex wired (notify) → $CODEX_CONFIG"
+  rm -f "$tmp"
+
+  warn "Codex config mentions this hook in another notify setting; left it unchanged."
+}
+
+wire_codex() {
+  if [ "$have_jq" -eq 0 ]; then
+    warn "jq not found - cannot edit $CODEX_HOOKS automatically."
+    warn "Add Stop and PermissionRequest command hooks pointing to:"
+    warn "  $HOOK_PATH"
+    return 0
+  fi
+  mkdir -p "$(dirname "$CODEX_HOOKS")"
+  [ -f "$CODEX_HOOKS" ] || printf '{}\n' >"$CODEX_HOOKS"
+  jq empty "$CODEX_HOOKS" 2>/dev/null || die "$CODEX_HOOKS is not valid JSON; fix it and re-run"
+  backup "$CODEX_HOOKS"
+  tmp=$(mktemp)
+  jq --arg cmd "$HOOK_PATH" "$CODEX_ADD_FILTER" "$CODEX_HOOKS" >"$tmp" && mv "$tmp" "$CODEX_HOOKS"
+  ok "Codex wired (Stop, PermissionRequest) → $CODEX_HOOKS"
+  remove_old_codex_notify
 }
 
 unwire_codex() {
-  [ -f "$CODEX_CONFIG" ] || return 0
-  grep -Fq "$HOOK_PATH" "$CODEX_CONFIG" 2>/dev/null || return 0
-  backup "$CODEX_CONFIG"
+  [ -f "$CODEX_HOOKS" ] || return 0
+  [ "$have_jq" -eq 1 ] || {
+    warn "jq not found - edit $CODEX_HOOKS by hand"
+    return 0
+  }
+  grep -Fq "$HOOK_PATH" "$CODEX_HOOKS" 2>/dev/null || return 0
+  backup "$CODEX_HOOKS"
   tmp=$(mktemp)
-  grep -v -F "$HOOK_PATH" "$CODEX_CONFIG" | grep -v -F "# Added by $APP" >"$tmp" || true
-  mv "$tmp" "$CODEX_CONFIG"
-  ok "Removed ntfy-hooks wiring from $CODEX_CONFIG"
+  jq --arg cmd "$HOOK_PATH" "$CODEX_DEL_FILTER" "$CODEX_HOOKS" >"$tmp" && mv "$tmp" "$CODEX_HOOKS"
+  ok "Removed ntfy-hooks wiring from $CODEX_HOOKS"
 }
 
 # --- Agent detection --------------------------------------------------------
