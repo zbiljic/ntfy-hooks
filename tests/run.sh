@@ -123,6 +123,23 @@ env HOME="$H" XDG_CONFIG_HOME="$H/.config" \
   sh "$ROOT/install.sh" --topic instopic --no-claude --codex --no-test >/dev/null
 check "codex: preserves wrapper notify chain" '/other/wrapper'          "$H/.codex/config.toml"
 
+# Existing config should be the default on rerun, including curl-pipe style
+# non-interactive reruns where no --topic is passed.
+H2="$WORK/home-existing"
+mkdir -p "$H2/.config/ntfy-hooks"
+printf 'NTFY_URL="https://ntfy.example"\nNTFY_TOPIC="existingtopic"\nNTFY_TOKEN="existingtoken"\n' >"$H2/.config/ntfy-hooks/config"
+env HOME="$H2" XDG_CONFIG_HOME="$H2/.config" \
+  sh "$ROOT/install.sh" --no-claude --no-codex --no-test -y >/dev/null
+check "existing config: keeps topic"      'NTFY_TOPIC="existingtopic"'   "$H2/.config/ntfy-hooks/config"
+check "existing config: keeps url"        'NTFY_URL="https://ntfy.example"' "$H2/.config/ntfy-hooks/config"
+check "existing config: keeps token"      'NTFY_TOKEN="existingtoken"'   "$H2/.config/ntfy-hooks/config"
+
+env HOME="$H2" XDG_CONFIG_HOME="$H2/.config" \
+  sh "$ROOT/install.sh" --topic flagtopic --server https://flag.example --token flagtoken --no-claude --no-codex --no-test -y >/dev/null
+check "flags override existing topic"     'NTFY_TOPIC="flagtopic"'       "$H2/.config/ntfy-hooks/config"
+check "flags override existing url"       'NTFY_URL="https://flag.example"' "$H2/.config/ntfy-hooks/config"
+check "flags override existing token"     'NTFY_TOKEN="flagtoken"'       "$H2/.config/ntfy-hooks/config"
+
 # Run again — must not duplicate.
 env HOME="$H" XDG_CONFIG_HOME="$H/.config" \
   CLAUDE_SETTINGS="$H/.claude/settings.json" CODEX_CONFIG="$H/.codex/config.toml" \

@@ -21,7 +21,8 @@ The installer:
 
 1. Drops the hook at `~/.config/ntfy-hooks/ntfy.sh`.
 2. Asks for (or generates) a private ntfy **topic** and writes it to
-   `~/.config/ntfy-hooks/config`.
+   `~/.config/ntfy-hooks/config`. Re-running uses the existing topic in that
+   file by default.
 3. Auto-detects and wires every supported agent it finds
    (`~/.claude`, `~/.codex`).
 4. Sends a test notification so you can confirm it works.

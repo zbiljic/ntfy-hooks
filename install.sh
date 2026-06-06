@@ -28,6 +28,9 @@ CODEX_HOOKS="${CODEX_HOOKS:-$HOME/.codex/hooks.json}"
 NTFY_SERVER="${NTFY_URL:-https://ntfy.sh}"
 TOPIC="${NTFY_TOPIC:-}"
 TOKEN="${NTFY_TOKEN:-}"
+ENV_NTFY_URL="${NTFY_URL+x}"
+ENV_NTFY_TOPIC="${NTFY_TOPIC+x}"
+ENV_NTFY_TOKEN="${NTFY_TOKEN+x}"
 
 ACTION="install"
 DO_CLAUDE="auto"
@@ -69,7 +72,8 @@ Usage:
   curl -fsSL ${REPO_RAW}/install.sh | sh -s -- [flags]
 
 Flags:
-  --topic <name>     ntfy topic to publish to (default: \$NTFY_TOPIC or random)
+  --topic <name>     ntfy topic to publish to (default: \$NTFY_TOPIC,
+                     existing config, or random)
   --server <url>     ntfy server (default: ${NTFY_SERVER})
   --token <token>    bearer token for protected/self-hosted servers
   --claude           force-enable Claude Code wiring
@@ -88,6 +92,25 @@ Environment:
   CODEX_HOOKS                        override config paths (testing)
 EOF
 }
+
+load_existing_config() {
+  [ -f "$CONFIG_FILE" ] || return 0
+
+  cfg_url=""
+  cfg_topic=""
+  cfg_token=""
+  # shellcheck disable=SC1090
+  . "$CONFIG_FILE"
+  cfg_url="${NTFY_URL:-}"
+  cfg_topic="${NTFY_TOPIC:-}"
+  cfg_token="${NTFY_TOKEN:-}"
+
+  if [ -z "$ENV_NTFY_URL" ] && [ -n "$cfg_url" ]; then NTFY_SERVER="$cfg_url"; fi
+  if [ -z "$ENV_NTFY_TOPIC" ] && [ -n "$cfg_topic" ]; then TOPIC="$cfg_topic"; fi
+  if [ -z "$ENV_NTFY_TOKEN" ] && [ -n "$cfg_token" ]; then TOKEN="$cfg_token"; fi
+}
+
+load_existing_config
 
 # --- Argument parsing -------------------------------------------------------
 
