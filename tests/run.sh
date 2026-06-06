@@ -140,6 +140,25 @@ check "flags override existing topic"     'NTFY_TOPIC="flagtopic"'       "$H2/.c
 check "flags override existing url"       'NTFY_URL="https://flag.example"' "$H2/.config/ntfy-hooks/config"
 check "flags override existing token"     'NTFY_TOKEN="flagtoken"'       "$H2/.config/ntfy-hooks/config"
 
+H3="$WORK/home-interactive"
+mkdir -p "$H3/.config/ntfy-hooks"
+printf 'NTFY_URL="https://interactive.example"\nNTFY_TOPIC="interactivetopic"\nNTFY_TOKEN="interactivetoken"\n' >"$H3/.config/ntfy-hooks/config"
+printf '\n\n\n' | env HOME="$H3" XDG_CONFIG_HOME="$H3/.config" NTFY_HOOKS_TTY=- \
+  sh "$ROOT/install.sh" --no-claude --no-codex --no-test >/dev/null 2>/dev/null
+check "interactive blank keeps url"       'NTFY_URL="https://interactive.example"' "$H3/.config/ntfy-hooks/config"
+check "interactive blank keeps topic"     'NTFY_TOPIC="interactivetopic"' "$H3/.config/ntfy-hooks/config"
+check "interactive blank keeps token"     'NTFY_TOKEN="interactivetoken"' "$H3/.config/ntfy-hooks/config"
+
+printf 'https://changed.example\nchangedtopic\nchangedtoken\n' | env HOME="$H3" XDG_CONFIG_HOME="$H3/.config" NTFY_HOOKS_TTY=- \
+  sh "$ROOT/install.sh" --no-claude --no-codex --no-test >/dev/null 2>/dev/null
+check "interactive value changes url"     'NTFY_URL="https://changed.example"' "$H3/.config/ntfy-hooks/config"
+check "interactive value changes topic"   'NTFY_TOPIC="changedtopic"'    "$H3/.config/ntfy-hooks/config"
+check "interactive value changes token"   'NTFY_TOKEN="changedtoken"'    "$H3/.config/ntfy-hooks/config"
+
+printf '\n\n-\n' | env HOME="$H3" XDG_CONFIG_HOME="$H3/.config" NTFY_HOOKS_TTY=- \
+  sh "$ROOT/install.sh" --no-claude --no-codex --no-test >/dev/null 2>/dev/null
+if grep -Fq 'NTFY_TOKEN=' "$H3/.config/ntfy-hooks/config"; then fail "interactive dash clears token"; else pass "interactive dash clears token"; fi
+
 # Run again — must not duplicate.
 env HOME="$H" XDG_CONFIG_HOME="$H/.config" \
   CLAUDE_SETTINGS="$H/.claude/settings.json" CODEX_CONFIG="$H/.codex/config.toml" \

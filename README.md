@@ -1,12 +1,13 @@
 # ntfy-hooks
 
-**Push notifications from your coding agents to your phone, via [ntfy](https://ntfy.sh) - set up in one line.**
+**Push notifications from your coding agents to your phone, via
+[ntfy](https://ntfy.sh) - set up in one line.**
 
 `ntfy-hooks` is a tiny, portable shell hook that fires an [ntfy](https://ntfy.sh)
 notification when a coding agent needs your attention (a permission/approval
-prompt) or finishes a turn. One script understands both major payload
-conventions, so the same hook works for **Claude Code** and **Codex** today, and
-anything else that can call a command on an event.
+prompt) or finishes a turn. One script understands **Claude Code** and **Codex**
+hook events today, and anything else that can call a command with a JSON event
+on stdin.
 
 No daemon, no binary to build, no wrapper around your agent. Just a hook and a
 config file.
@@ -20,14 +21,17 @@ curl -fsSL https://raw.githubusercontent.com/zbiljic/ntfy-hooks/main/install.sh 
 The installer:
 
 1. Drops the hook at `~/.config/ntfy-hooks/ntfy.sh`.
-2. Asks for (or generates) a private ntfy **topic** and writes it to
-   `~/.config/ntfy-hooks/config`. Re-running uses the existing topic in that
-   file by default.
+2. Asks for your ntfy server, topic, and optional token, then writes them to
+   `~/.config/ntfy-hooks/config`.
 3. Auto-detects and wires every supported agent it finds
    (`~/.claude`, `~/.codex`).
 4. Sends a test notification so you can confirm it works.
 
-Re-running is safe - it never duplicates existing wiring.
+Re-running is safe: it updates the installed hook, checks the agent wiring, and
+never duplicates existing hooks. In interactive mode, existing config values are
+shown as defaults; press Enter to keep them. In non-interactive mode (`-y`), the
+existing config is reused automatically unless flags or environment variables
+override it.
 
 > **Then subscribe to your topic** in the ntfy [app](https://ntfy.sh/app)
 > (iOS/Android) or at `https://ntfy.sh/<your-topic>`. The topic name is the only
@@ -38,16 +42,20 @@ Re-running is safe - it never duplicates existing wiring.
 ```bash
 git clone https://github.com/zbiljic/ntfy-hooks
 cd ntfy-hooks
-./install.sh                       # interactive
-./install.sh --topic my-topic -y   # non-interactive
+./install.sh                               # interactive
+./install.sh --topic my-topic -y           # non-interactive
+./install.sh --server https://ntfy.example # self-hosted server
 ```
 
 ### Flags
 
 ```
---topic <name>     ntfy topic (default: $NTFY_TOPIC or a random private one)
---server <url>     ntfy server (default: https://ntfy.sh)
---token <token>    bearer token for protected / self-hosted servers
+--topic <name>     ntfy topic
+                   (default: $NTFY_TOPIC, existing config, or random)
+--server <url>     ntfy server
+                   (default: $NTFY_URL, existing config, or https://ntfy.sh)
+--token <token>    ntfy token
+                   (default: $NTFY_TOKEN or existing config)
 --claude | --no-claude    force / skip Claude Code wiring
 --codex  | --no-codex     force / skip Codex wiring
 --no-test          don't send a test notification
@@ -72,14 +80,14 @@ Titles include the project directory name, e.g. `Claude Code (my-repo)`.
 
 ## Configuration
 
-Everything is read from `~/.config/ntfy-hooks/config` (a shell file the hook
-sources), and can be overridden by environment variables:
+At runtime, the hook reads `~/.config/ntfy-hooks/config` (a shell file), and
+these environment variables can override it:
 
 | Variable        | Default            | Meaning                                   |
 | --------------- | ------------------ | ----------------------------------------- |
 | `NTFY_TOPIC`    | - (required)       | the ntfy topic to publish to              |
 | `NTFY_URL`      | `https://ntfy.sh`  | ntfy server                               |
-| `NTFY_TOKEN`    | -                  | bearer token for protected servers        |
+| `NTFY_TOKEN`    | -                  | token for protected servers               |
 | `NTFY_PRIORITY` | -                  | force a priority for every message        |
 | `NTFY_CLICK`    | -                  | URL opened when the notification is tapped|
 | `NTFY_QUIET`    | -                  | set to `1` to mute all notifications      |

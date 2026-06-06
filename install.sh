@@ -19,6 +19,7 @@ REPO_RAW="https://raw.githubusercontent.com/${REPO}/main"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/ntfy-hooks"
 HOOK_PATH="${NTFY_HOOK_PATH:-$CONFIG_DIR/ntfy.sh}"
 CONFIG_FILE="$CONFIG_DIR/config"
+PROMPT_TTY="${NTFY_HOOKS_TTY:-/dev/tty}"
 
 CLAUDE_SETTINGS="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
 CODEX_CONFIG="${CODEX_CONFIG:-$HOME/.codex/config.toml}"
@@ -37,6 +38,9 @@ DO_CLAUDE="auto"
 DO_CODEX="auto"
 DO_TEST="auto"
 ASSUME_YES=0
+FLAG_NTFY_URL=0
+FLAG_NTFY_TOPIC=0
+FLAG_NTFY_TOKEN=0
 
 # --- Output helpers ---------------------------------------------------------
 
@@ -74,8 +78,9 @@ Usage:
 Flags:
   --topic <name>     ntfy topic to publish to (default: \$NTFY_TOPIC,
                      existing config, or random)
-  --server <url>     ntfy server (default: ${NTFY_SERVER})
-  --token <token>    bearer token for protected/self-hosted servers
+  --server <url>     ntfy server (default: \$NTFY_URL, existing config,
+                     or ${NTFY_SERVER})
+  --token <token>    ntfy token (default: \$NTFY_TOKEN or existing config)
   --claude           force-enable Claude Code wiring
   --no-claude        skip Claude Code wiring
   --codex            force-enable Codex wiring
@@ -118,14 +123,17 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --topic)
       TOPIC="${2:?--topic needs a value}"
+      FLAG_NTFY_TOPIC=1
       shift 2
       ;;
     --server)
       NTFY_SERVER="${2:?--server needs a value}"
+      FLAG_NTFY_URL=1
       shift 2
       ;;
     --token)
       TOKEN="${2:?--token needs a value}"
+      FLAG_NTFY_TOKEN=1
       shift 2
       ;;
     --hook-path)
@@ -167,6 +175,27 @@ while [ "$#" -gt 0 ]; do
     *) die "unknown flag: $1 (try --help)" ;;
   esac
 done
+
+can_prompt() {
+  [ "$PROMPT_TTY" = "-" ] && return 0
+  (: <>"$PROMPT_TTY") 2>/dev/null
+}
+
+prompt_print() {
+  if [ "$PROMPT_TTY" = "-" ]; then
+    printf '%s' "$*" >&2
+  else
+    printf '%s' "$*" >"$PROMPT_TTY"
+  fi
+}
+
+prompt_read() {
+  if [ "$PROMPT_TTY" = "-" ]; then
+    read -r answer || answer=""
+  else
+    read -r answer <"$PROMPT_TTY" || answer=""
+  fi
+}
 
 # --- Preconditions ----------------------------------------------------------
 
@@ -425,12 +454,39 @@ install_hook() {
   ok "Hook installed → $HOOK_PATH"
 }
 
-resolve_topic() {
-  if [ -n "$TOPIC" ]; then return 0; fi
-  if [ "$ASSUME_YES" -eq 0 ] && [ -r /dev/tty ]; then
-    printf 'ntfy topic [blank = generate a random, private one]: ' >/dev/tty
-    read -r TOPIC </dev/tty || TOPIC=""
+resolve_config() {
+  if [ "$ASSUME_YES" -eq 0 ] && can_prompt; then
+    if [ -z "$ENV_NTFY_URL" ] && [ "$FLAG_NTFY_URL" -eq 0 ]; then
+      prompt_print "ntfy server [$NTFY_SERVER]: "
+      prompt_read
+      [ -n "$answer" ] && NTFY_SERVER="$answer"
+    fi
+
+    if [ -z "$ENV_NTFY_TOPIC" ] && [ "$FLAG_NTFY_TOPIC" -eq 0 ]; then
+      if [ -n "$TOPIC" ]; then
+        prompt_print "ntfy topic [$TOPIC]: "
+      else
+        prompt_print 'ntfy topic [blank = generate a random, private one]: '
+      fi
+      prompt_read
+      [ -n "$answer" ] && TOPIC="$answer"
+    fi
+
+    if [ -z "$ENV_NTFY_TOKEN" ] && [ "$FLAG_NTFY_TOKEN" -eq 0 ]; then
+      if [ -n "$TOKEN" ]; then
+        prompt_print 'ntfy token [configured; blank = keep, "-" = unset]: '
+      else
+        prompt_print 'ntfy token [blank = none]: '
+      fi
+      prompt_read
+      case "$answer" in
+        -) TOKEN="" ;;
+        "") ;;
+        *) TOKEN="$answer" ;;
+      esac
+    fi
   fi
+
   if [ -z "$TOPIC" ]; then
     TOPIC=$(gen_topic)
     info "Generated a random topic: $TOPIC"
@@ -486,7 +542,7 @@ fi
 
 info "Installing ${APP}"
 install_hook
-resolve_topic
+resolve_config
 write_config
 
 wired_any=0
